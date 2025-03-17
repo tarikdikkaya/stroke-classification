@@ -1,17 +1,17 @@
 """DICOM dataset loading with caching capability."""
-
 import os
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
 import pydicom
-from torchvision import transforms
+import hashlib
 import pickle
+import functools
+import logging
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-import functools
-import hashlib
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -61,35 +61,39 @@ class CachedDICOMDataset(Dataset):
             class_path = os.path.join(self.root_dir, class_name)
             if os.path.exists(class_path):
                 for file_name in os.listdir(class_path):
-                    dicom_path = os.path.join(class_path, file_name)
-                    if os.path.isfile(dicom_path) and file_name.endswith(".dcm"):
+                    file_path = os.path.join(class_path, file_name)
+                    if os.path.isfile(file_path) and file_name.lower().endswith((".dcm", ".jpg", ".png")):
                         try:
-                            # Check if dicom is readable but don't load pixel data yet
-                            dicom = pydicom.dcmread(dicom_path, force=True, stop_before_pixels=True)
-                            self.samples.append((dicom_path, label))
+                            # Check if file is readable but don't load pixel data yet
+                            if file_name.lower().endswith(".dcm"):
+                                pydicom.dcmread(file_path, force=True, stop_before_pixels=True)
+                            else:
+                                # For JPG/PNG files, just verify they can be opened
+                                Image.open(file_path).verify()
+                            self.samples.append((file_path, label))
                         except Exception as e:
-                            logger.warning(f"⚠️ Error: {dicom_path} could not be read! Error: {e}")
+                            logger.warning(f"⚠️ Error: {file_path} could not be read! Error: {e}")
         
         if len(self.samples) == 0:
-            raise ValueError(f"❌ Error: No usable DICOM files found in '{self.root_dir}'!")
+            raise ValueError(f"❌ Error: No usable files found in '{self.root_dir}'!")
 
-        logger.info(f"✅ Loaded {len(self.samples)} DICOM files. Classes: {self.class_map}")
+        logger.info(f"✅ Loaded {len(self.samples)} files. Classes: {self.class_map}")
     
-    def _get_cache_path(self, dicom_path: str) -> str:
-        """Generate a unique cache filename for a DICOM file."""
+    def _get_cache_path(self, file_path: str) -> str:
+        """Generate a unique cache filename for a file."""
         if not self.use_cache:
             return None
             
         # Create a unique filename based on the file path and last modification time
-        file_stat = os.stat(dicom_path)
-        hash_input = f"{dicom_path}_{file_stat.st_mtime}"
+        file_stat = os.stat(file_path)
+        hash_input = f"{file_path}_{file_stat.st_mtime}"
         filename_hash = hashlib.md5(hash_input.encode()).hexdigest()
         return os.path.join(self.cache_dir, f"{filename_hash}.pkl")
     
     @functools.lru_cache(maxsize=32)  # In-memory cache for most recently used images
-    def _load_dicom_with_cache(self, dicom_path: str) -> np.ndarray:
-        """Load a DICOM file with caching for faster access."""
-        cache_path = self._get_cache_path(dicom_path)
+    def _load_image_with_cache(self, file_path: str) -> np.ndarray:
+        """Load an image file with caching for faster access."""
+        cache_path = self._get_cache_path(file_path)
         
         # Try to load from cache first
         if self.use_cache and cache_path and os.path.exists(cache_path):
@@ -97,38 +101,53 @@ class CachedDICOMDataset(Dataset):
                 with open(cache_path, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                logger.warning(f"Failed to load cache for {dicom_path}: {e}")
+                logger.warning(f"Failed to load cache for {file_path}: {e}")
         
-        # Load DICOM file if not in cache
-        dicom = pydicom.dcmread(dicom_path, force=True)
-        image = dicom.pixel_array.astype(np.float32)
-        
-        # Handle grayscale images by converting to 3-channel
-        if len(image.shape) == 2:
-            image = np.stack([image] * 3, axis=-1)
-        
-        # Normalize to [0, 255]
-        image = (image - np.min(image)) / (np.max(image) - np.min(image)) * 255
-        image = image.astype(np.uint8)
-        
-        # Save to cache
-        if self.use_cache and cache_path:
-            try:
-                with open(cache_path, 'wb') as f:
-                    pickle.dump(image, f)
-            except Exception as e:
-                logger.warning(f"Failed to write cache for {dicom_path}: {e}")
+        # Load image file based on its extension
+        try:
+            if file_path.lower().endswith(".dcm"):
+                # Handle DICOM files
+                dicom = pydicom.dcmread(file_path, force=True)
+                image = dicom.pixel_array.astype(np.float32)
                 
-        return image
+                # Handle grayscale images by converting to 3-channel
+                if len(image.shape) == 2:
+                    image = np.stack([image] * 3, axis=-1)
+                
+                # Normalize to [0, 255]
+                if np.max(image) > np.min(image):  # Avoid division by zero
+                    image = (image - np.min(image)) / (np.max(image) - np.min(image)) * 255
+                else:
+                    image = np.zeros_like(image)
+            else:
+                # Handle JPG/PNG files
+                pil_image = Image.open(file_path).convert("RGB")
+                image = np.array(pil_image).astype(np.float32)
+            
+            image = image.astype(np.uint8)
+            
+            # Save to cache
+            if self.use_cache and cache_path:
+                try:
+                    with open(cache_path, 'wb') as f:
+                        pickle.dump(image, f)
+                except Exception as e:
+                    logger.warning(f"Failed to write cache for {file_path}: {e}")
+                    
+            return image
+        except Exception as e:
+            logger.error(f"Failed to load image {file_path}: {e}")
+            # Return a placeholder black image as fallback
+            return np.zeros((224, 224, 3), dtype=np.uint8)
     
     def __len__(self) -> int:
         return len(self.samples)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        dicom_path, label = self.samples[idx]
+        file_path, label = self.samples[idx]
         
         # Load image from cache or directly from file
-        image = self._load_dicom_with_cache(dicom_path)
+        image = self._load_image_with_cache(file_path)
         
         # Convert to PIL Image for transformations
         image = transforms.ToPILImage()(image)
@@ -150,25 +169,26 @@ class CachedDICOMDataset(Dataset):
 def create_dataloaders(
     train_path: str,
     test_path: str,
-    batch_size: int = 32,
+    batch_size: int = 16,
     num_workers: int = 4,
     use_cache: bool = True,
-    image_size: int = 480
+    image_size: int = 224
 ) -> Tuple[DataLoader, DataLoader, Dict]:
-    """Create train and test dataloaders with transforms.
+    """
+    Create training and test dataloaders.
     
     Args:
         train_path: Path to training data
         test_path: Path to test data
-        batch_size: Batch size for dataloaders
-        num_workers: Number of worker processes for data loading
-        use_cache: Whether to use caching for DICOM files
-        image_size: Input image size for the model
+        batch_size: Batch size for training and validation
+        num_workers: Number of workers for data loading
+        use_cache: Whether to use cached images
+        image_size: Size of input images
         
     Returns:
-        Tuple of (train_loader, test_loader, class_info)
+        Training dataloader, test dataloader, and class information
     """
-    # Data transformations for training (with augmentation)
+    # Define transformations for training (with augmentation)
     train_transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
         transforms.RandomHorizontalFlip(),
@@ -178,7 +198,7 @@ def create_dataloaders(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Data transformations for testing/inference (no augmentation)
+    # Define transformations for testing (no augmentation)
     test_transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
@@ -204,9 +224,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,  # Speed up data transfer to GPU
-        drop_last=True,
-        persistent_workers=num_workers > 0  # Keep workers alive between epochs
+        pin_memory=True
     )
     
     test_loader = DataLoader(
@@ -214,52 +232,12 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
-        drop_last=False
+        pin_memory=True
     )
     
-    return train_loader, test_loader, train_dataset.get_class_info()
-
-# Function for inference data preparation
-def prepare_single_dicom_for_inference(
-    dicom_path: str,
-    transform=None,
-    image_size: int = 480
-) -> torch.Tensor:
-    """
-    Prepare a single DICOM file for inference.
+    # Get class information from training dataset
+    class_info = train_dataset.get_class_info()
     
-    Args:
-        dicom_path: Path to the DICOM file
-        transform: Optional transform to apply
-        image_size: Input image size for the model
-        
-    Returns:
-        Tensor ready for model inference
-    """
-    # Default transform if none provided
-    if transform is None:
-        transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+    logger.info(f"Created dataloaders: {len(train_loader)} training batches, {len(test_loader)} test batches")
     
-    # Load DICOM file
-    dicom = pydicom.dcmread(dicom_path, force=True)
-    image = dicom.pixel_array.astype(np.float32)
-    
-    # Handle grayscale images
-    if len(image.shape) == 2:
-        image = np.stack([image] * 3, axis=-1)
-    
-    # Normalize to [0, 255]
-    image = (image - np.min(image)) / (np.max(image) - np.min(image)) * 255
-    image = image.astype(np.uint8)
-    
-    # Convert to PIL and apply transform
-    image = transforms.ToPILImage()(image)
-    image_tensor = transform(image)
-    
-    # Add batch dimension
-    return image_tensor.unsqueeze(0)  # Shape: [1, C, H, W]
+    return train_loader, test_loader, class_info
