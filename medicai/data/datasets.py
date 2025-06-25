@@ -190,13 +190,18 @@ def create_dataloaders(
     Returns:
         Training dataloader, test dataloader, and class information
     """
-    # Define transformations for training (with augmentation)
+    # Define transformations for training (with enhanced augmentation)
     train_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(10),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.Resize((image_size + 32, image_size + 32)),  # Resize larger first
+        transforms.RandomResizedCrop(image_size, scale=(0.8, 1.0), ratio=(0.9, 1.1)),  # Random crop
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.2),  # Medical images can be flipped vertically
+        transforms.RandomRotation(15, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.1),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),  # Random translation and scaling
+        transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))], p=0.2),  # Blur augmentation
         transforms.ToTensor(),
+        transforms.RandomErasing(p=0.2, scale=(0.02, 0.2), ratio=(0.3, 3.3)),  # Random erasing
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
