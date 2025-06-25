@@ -139,7 +139,9 @@ class CachedDICOMDataset(Dataset):
             logger.error(f"Failed to load image {file_path}: {e}")
             # Return a placeholder black image as fallback
             return np.zeros((224, 224, 3), dtype=np.uint8)
-    
+    def get_original_file_paths(self) -> List[str]:
+        return [path for path, _ in self.samples]
+
     def __len__(self) -> int:
         return len(self.samples)
     

@@ -24,6 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def load_trained_model(checkpoint_path: str, model_name: str, num_classes: int) -> TimmLightningClassifier:
     """
     Load a trained model from checkpoint.
@@ -83,6 +84,33 @@ def load_trained_model(checkpoint_path: str, model_name: str, num_classes: int) 
                 raise RuntimeError(f"Could not load model from {checkpoint_path}")
         else:
             raise e
+def save_classified_pngs(original_paths, predictions, output_base_dir, image_ext='png'):
+    """
+    Copy PNG images into class folders (e.g., class_0, class_1) based on predictions.
+
+    Args:
+        original_paths (list of str): Original DICOM paths.
+        predictions (list or np.array): Model predictions.
+        output_base_dir (str): Directory containing the 'png' subfolder.
+        image_ext (str): Image file extension (default: 'png').
+    """
+    logger.info("Sorting predicted PNG images into class folders...")
+
+    for dicom_path, pred in zip(original_paths, predictions):
+        dicom_name = Path(dicom_path).stem
+        png_name = dicom_name + f".{image_ext}"
+        src_png = Path(output_base_dir) / image_ext / png_name
+        dst_dir = Path(output_base_dir) / f"class_{pred}"
+        dst_png = dst_dir / png_name
+
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        if src_png.exists():
+            shutil.copy2(src_png, dst_png)
+        else:
+            logger.warning(f"Missing PNG image: {src_png} — Skipped")
+
+    logger.info("Finished sorting PNGs.")
 
 def evaluate_model(model, test_loader, device="cuda"):
     """
@@ -433,6 +461,16 @@ def main():
     )
     
     logger.info(f"All results saved to {args.output_dir}")
+    
+        # Save predicted PNG images into folders like class_0, class_1
+    original_dicom_paths = test_dataset.get_original_file_paths()
+    save_classified_pngs(
+        original_paths=original_dicom_paths,
+        predictions=metrics['predictions'],
+        output_base_dir=args.output_dir,
+        image_ext='png'
+    )
+
 
 if __name__ == '__main__':
     main()

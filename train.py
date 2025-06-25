@@ -10,6 +10,12 @@ from medicai.data.datasets import create_dataloaders
 import torch
 torch.set_float32_matmul_precision('high')
 
+# Enable optimized attention for better FP16 performance if available
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -27,10 +33,17 @@ def main():
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate')
-    parser.add_argument('--image_size', type=int, default=448, help='Input image size')
+    parser.add_argument('--image_size', type=int, default=224, help='Input image size')
     parser.add_argument('--use_cache', action='store_true', help='Use cached DICOM files')
+    parser.add_argument('--use_fp16', action='store_true', default=True, help='Use FP16 mixed precision training')
+    parser.add_argument('--max_epochs', type=int, default=30, help='Maximum number of epochs to train')
     
     args = parser.parse_args()
+    
+    # Adjust batch size for FP16 training if not explicitly set
+    if args.use_fp16 and args.batch_size == 8:  # If using default batch size
+        args.batch_size = 12  # Increase batch size for FP16 to utilize memory savings
+        logger.info(f"🚀 FP16 training enabled - increased batch size to {args.batch_size}")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -53,7 +66,7 @@ def main():
     # Initialize model
     logger.info("Initializing ViT Small Patch16 model...")
     model = TimmLightningClassifier(
-        model_name='eva02_large_patch14_448.mim_m38m_ft_in22k_in1k',
+        model_name='vit_small_patch16_224',
         num_classes=num_classes,
         learning_rate=args.learning_rate,
         input_size=args.image_size
@@ -63,19 +76,27 @@ def main():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=args.output_dir,
-        filename=f'eva02_large_patch14_448.mim_m38m_ft_in22k_in1k_{timestamp}_{{epoch:02d}}_{{val_acc:.4f}}',
+        filename=f'p2_model_vit_small_patch16_224_{timestamp}_{{epoch:02d}}_{{val_acc:.4f}}',
         monitor='val_acc',
         mode='max',
         save_top_k=1
     )
     
-    # Train the model for 2 epochs
-    logger.info("Starting training for 2 epochs...")
+    # Train the model
+    precision = "16-mixed" if args.use_fp16 else "32"
+    logger.info(f"Starting training for {args.max_epochs} epochs with precision: {precision}...")
+    
+    # Create a safe logging directory
+    safe_log_dir = os.path.join(args.output_dir, "logs")
+    os.makedirs(safe_log_dir, exist_ok=True)
+    
     trainer = model.train_model(
         train_dataloader=train_loader,
         val_dataloader=val_loader,
-        max_epochs=30,  # Training for exactly 2 epochs
-        callbacks=[checkpoint_callback]
+        max_epochs=args.max_epochs,
+        callbacks=[checkpoint_callback],
+        precision=precision,
+        logger_dir=safe_log_dir
     )
     
     # Export the model

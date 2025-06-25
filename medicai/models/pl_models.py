@@ -46,7 +46,7 @@ class TimmLightningClassifier(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=0.01)
         
         # Add learning rate scheduler
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -68,9 +68,10 @@ class TimmLightningClassifier(pl.LightningModule):
         }
 
     def train_model(self, train_dataloader, val_dataloader, max_epochs: int = 10,
-                   accumulate_grad_batches: int = 1, callbacks: Optional[List] = None):
+                   accumulate_grad_batches: int = 1, callbacks: Optional[List] = None,
+                   precision: Union[str, int] = "32", logger_dir: Optional[str] = None):
         """
-        Train the model using PyTorch Lightning Trainer with mixed precision (float16).
+        Train the model using PyTorch Lightning Trainer with configurable precision.
 
         Parameters:
             train_dataloader: DataLoader for training data.
@@ -78,6 +79,8 @@ class TimmLightningClassifier(pl.LightningModule):
             max_epochs (int): Maximum number of training epochs.
             accumulate_grad_batches (int): Number of batches to accumulate gradients.
             callbacks (List, optional): Additional callbacks for training.
+            precision (Union[str, int]): Training precision. Options: "32", "16-mixed", "bf16-mixed", 16, 32.
+            logger_dir (str, optional): Directory for logging. If None, uses default logger.
         """
         # Default callbacks
         if callbacks is None:
@@ -94,12 +97,31 @@ class TimmLightningClassifier(pl.LightningModule):
                     mode='min'
                 )
             ]
+        
+        # Configure model for the specified precision
+        self.configure_model_for_precision(precision)
+        
+        # Configure gradient clipping for FP16 stability
+        gradient_clip_val = 1.0 if precision in ["16-mixed", 16] else 0.0
+        
+        # Configure logger
+        logger = None
+        if logger_dir:
+            from pytorch_lightning.loggers import TensorBoardLogger
+            logger = TensorBoardLogger(save_dir=logger_dir, name="training_logs")
+        else:
+            # Disable default logger to avoid path issues
+            logger = False
             
         trainer = pl.Trainer(
-            precision=16,
+            precision=precision,
             max_epochs=max_epochs,
             callbacks=callbacks,
-            accumulate_grad_batches=accumulate_grad_batches
+            accumulate_grad_batches=accumulate_grad_batches,
+            gradient_clip_val=gradient_clip_val,
+            logger=logger,
+            enable_progress_bar=True,
+            enable_model_summary=True
         )
         
         trainer.fit(self, train_dataloader, val_dataloader)
@@ -175,3 +197,22 @@ class TimmLightningClassifier(pl.LightningModule):
         scripted_model = torch.jit.trace(self.model, example_input)
         scripted_model.save(filepath)
         print(f"Model exported to {filepath}")
+
+    def configure_model_for_precision(self, precision: Union[str, int]):
+        """
+        Configure the model for specific precision training.
+        
+        Parameters:
+            precision: Training precision ("32", "16-mixed", "bf16-mixed", 16, 32)
+        """
+        if precision in ["16-mixed", 16]:
+            # Enable automatic mixed precision optimizations
+            # Convert batch norm to float32 for stability
+            for module in self.model.modules():
+                if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                    module.float()
+                # Ensure layer norm stays in float32 for stability
+                elif isinstance(module, nn.LayerNorm):
+                    module.float()
+        
+        return self
