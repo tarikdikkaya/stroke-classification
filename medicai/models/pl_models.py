@@ -53,8 +53,7 @@ class TimmLightningClassifier(pl.LightningModule):
             optimizer, 
             mode='min',
             factor=0.1,
-            patience=3,
-            verbose=True
+            patience=3
         )
         
         return {
