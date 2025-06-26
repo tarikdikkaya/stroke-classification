@@ -46,21 +46,37 @@ class TimmLightningClassifier(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=0.01)
+        # Use different optimizers based on model type
+        if 'vit' in self.model.__class__.__name__.lower() or hasattr(self.model, 'patch_embed'):
+            # Vision Transformers work better with AdamW
+            optimizer = optim.AdamW(
+                self.parameters(), 
+                lr=self.learning_rate, 
+                weight_decay=0.05,
+                betas=(0.9, 0.999)
+            )
+        else:
+            # CNNs can use SGD with momentum
+            optimizer = optim.SGD(
+                self.parameters(), 
+                lr=self.learning_rate, 
+                momentum=0.9, 
+                weight_decay=1e-4,
+                nesterov=True
+            )
         
-        # Add learning rate scheduler
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        # Use Cosine annealing with warm restarts for better convergence
+        scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, 
-            mode='min',
-            factor=0.1,
-            patience=3
+            T_0=10,  # Restart every 10 epochs
+            T_mult=2,  # Double the restart period each time
+            eta_min=1e-7  # Minimum learning rate
         )
         
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'monitor': 'val_loss',
                 'interval': 'epoch',
                 'frequency': 1
             }
