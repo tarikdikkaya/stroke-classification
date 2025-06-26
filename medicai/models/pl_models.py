@@ -3,11 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 import timm
 import pytorch_lightning as pl
+import numpy as np
 import os
 from typing import Optional, List, Union
 
 class TimmLightningClassifier(pl.LightningModule):
-    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 1e-3, input_size: int = 224):
+    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 1e-3, 
+                 input_size: int = 224, class_weights: Optional[torch.Tensor] = None,
+                 label_smoothing: float = 0.0, mixup_alpha: float = 0.0):
         """
         Initialize the classifier with a timm model.
         
@@ -17,21 +20,63 @@ class TimmLightningClassifier(pl.LightningModule):
             num_classes (int): Number of output classes.
             learning_rate (float): Learning rate for the optimizer.
             input_size (int): Input image size (square dimensions). Default: 224.
+            class_weights (torch.Tensor): Class weights for imbalanced datasets.
+            label_smoothing (float): Label smoothing factor.
+            mixup_alpha (float): Mixup alpha parameter.
         """
         super().__init__()
         self.model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
-        self.loss_fn = nn.CrossEntropyLoss()
+        
+        # Loss function with optional label smoothing and class weights
+        if label_smoothing > 0:
+            self.loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+        else:
+            self.loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+            
         self.learning_rate = learning_rate
         self.input_size = input_size
+        self.mixup_alpha = mixup_alpha
+        
+        # Store class weights for potential use
+        if class_weights is not None:
+            self.register_buffer('class_weights', class_weights)
+        else:
+            self.class_weights = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model."""
         return self.model(x)
 
+    def mixup_data(self, x, y, alpha=1.0):
+        """Apply mixup augmentation to input data."""
+        if alpha > 0:
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1
+
+        batch_size = x.size(0)
+        index = torch.randperm(batch_size).to(x.device)
+
+        mixed_x = lam * x + (1 - lam) * x[index, :]
+        y_a, y_b = y, y[index]
+        return mixed_x, y_a, y_b, lam
+
+    def mixup_criterion(self, pred, y_a, y_b, lam):
+        """Calculate mixup loss."""
+        return lam * self.loss_fn(pred, y_a) + (1 - lam) * self.loss_fn(pred, y_b)
+
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = self.loss_fn(logits, y)
+        
+        # Apply mixup if enabled
+        if self.mixup_alpha > 0:
+            x, y_a, y_b, lam = self.mixup_data(x, y, self.mixup_alpha)
+            logits = self(x)
+            loss = self.mixup_criterion(logits, y_a, y_b, lam)
+        else:
+            logits = self(x)
+            loss = self.loss_fn(logits, y)
+            
         self.log('train_loss', loss)
         return loss
 

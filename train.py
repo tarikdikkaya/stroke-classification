@@ -37,11 +37,21 @@ def main():
     parser.add_argument('--use_cache', action='store_true', help='Use cached DICOM files')
     parser.add_argument('--use_fp16', action='store_true', default=True, help='Use FP16 mixed precision training')
     parser.add_argument('--max_epochs', type=int, default=30, help='Maximum number of epochs to train')
-    parser.add_argument('--model_name', type=str, default='vit_small_patch16_224', 
+    parser.add_argument('--model_name', type=str, default='tf_efficientnet_b4_ns', 
                        choices=['vit_small_patch16_224', 'vit_base_patch16_224', 'efficientnet_b3', 
                                'efficientnetv2_s', 'resnet50', 'swin_small_patch4_window7_224',
-                               'convnext_small', 'tf_efficientnet_b4_ns'], 
+                               'convnext_small', 'tf_efficientnet_b4_ns', 'tf_efficientnet_b5_ns',
+                               'convnext_base', 'swin_base_patch4_window7_224'], 
                        help='Model architecture to use')
+    parser.add_argument('--dataset_type', type=str, default='general', 
+                       choices=['general', 'ct_binary', 'mri_binary'], 
+                       help='Type of dataset for hierarchical training')
+    parser.add_argument('--class_weights', action='store_true', 
+                       help='Use class weights to handle imbalanced datasets')
+    parser.add_argument('--label_smoothing', type=float, default=0.0, 
+                       help='Label smoothing factor (0.0 to 0.2)')
+    parser.add_argument('--mixup_alpha', type=float, default=0.0, 
+                       help='Mixup alpha parameter (0.0 to disable)')
     
     args = parser.parse_args()
     
@@ -68,13 +78,33 @@ def main():
     logger.info(f"Found {num_classes} classes: {class_info['class_map']}")
     logger.info(f"Class counts: {class_info['class_counts']}")
     
-    # Initialize model
-    logger.info(f"Initializing {args.model_name} model...")
+    # Initialize model with enhanced configuration
+    logger.info(f"Initializing {args.model_name} model for {args.dataset_type} dataset...")
+    
+    # Calculate class weights if requested
+    class_weights = None
+    if args.class_weights:
+        from sklearn.utils.class_weight import compute_class_weight
+        import numpy as np
+        
+        # Extract labels for class weight calculation
+        labels = []
+        for _, label in train_loader.dataset.samples:
+            labels.append(label)
+        
+        unique_classes = np.unique(labels)
+        class_weights = compute_class_weight('balanced', classes=unique_classes, y=labels)
+        class_weights = torch.FloatTensor(class_weights)
+        logger.info(f"Using class weights: {class_weights}")
+    
     model = TimmLightningClassifier(
         model_name=args.model_name,
         num_classes=num_classes,
         learning_rate=args.learning_rate,
-        input_size=args.image_size
+        input_size=args.image_size,
+        class_weights=class_weights,
+        label_smoothing=args.label_smoothing,
+        mixup_alpha=args.mixup_alpha
     )
     
     # Create timestamp for model checkpoint naming
