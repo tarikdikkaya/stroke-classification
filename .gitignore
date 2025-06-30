@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+stroke_env/
 
 # Spyder project settings
 .spyderproject
@@ -176,3 +177,8 @@ cython_debug/
 
 .pt 
 .ckpt 
+
+P2_M1_split_dataset/
+outputs/
+P2_main_dataset/
+P2_hasta_veriseti/

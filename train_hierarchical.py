@@ -10,11 +10,13 @@ import logging
 import subprocess
 from pathlib import Path
 from hierarchical_classifier import create_hierarchical_datasets
+from model_configs import display_model_menu, get_model_config, print_model_recommendations
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def train_hierarchical_models(base_data_path: str, output_dir: str = "./models"):
+def train_hierarchical_models(base_data_path: str, output_dir: str = "./models", 
+                             ct_model_id: int = None, mri_model_id: int = None, auto_config: bool = False):
     """
     Train both CT and MRI models for hierarchical classification
     """
@@ -29,22 +31,51 @@ def train_hierarchical_models(base_data_path: str, output_dir: str = "./models")
     logger.info("Preparing hierarchical datasets...")
     ct_path, mri_path = create_hierarchical_datasets(base_data_path)
     
-    # Training configurations
-    ct_config = {
-        'model_name': 'tf_efficientnet_b4_ns',
-        'learning_rate': 3e-5,
-        'max_epochs': 40,
-        'batch_size': 16,
-        'dataset_type': 'ct_binary'
-    }
+    # Interactive model selection for CT and MRI
+    if not auto_config:
+        if ct_model_id is None:
+            print("\n🩻 SELECT CT BINARY CLASSIFIER MODEL:")
+            print("(Recommended: EfficientNet or ConvNeXt models for CT scans)")
+            ct_model_id = display_model_menu()
+        
+        if mri_model_id is None:
+            print("\n🧠 SELECT MRI BINARY CLASSIFIER MODEL:")
+            print("(Recommended: Vision Transformers or Swin models for MRI scans)")
+            mri_model_id = display_model_menu()
+    else:
+        # Default models for auto configuration
+        ct_model_id = ct_model_id or 1   # tf_efficientnet_b4_ns
+        mri_model_id = mri_model_id or 3  # swin_small_patch4_window7_224
     
-    mri_config = {
-        'model_name': 'swin_small_patch4_window7_224',
-        'learning_rate': 1e-4,
-        'max_epochs': 35,
-        'batch_size': 12,
-        'dataset_type': 'mri_binary'
-    }
+    # Get optimized configurations
+    ct_config = get_model_config(ct_model_id, use_fp16=True)
+    mri_config = get_model_config(mri_model_id, use_fp16=True)
+    
+    # Override specific settings for medical imaging
+    ct_config.update({
+        'dataset_type': 'ct_binary',
+        'label_smoothing': 0.1,  # Reduce overfitting for medical data
+        'class_weights': True    # Handle class imbalance
+    })
+    
+    mri_config.update({
+        'dataset_type': 'mri_binary',
+        'mixup_alpha': 0.2,     # Data augmentation for MRI
+        'class_weights': True   # Handle class imbalance
+    })
+    
+    # Print configurations
+    if not auto_config:
+        print("\n🩻 CT CLASSIFIER CONFIGURATION:")
+        print_model_recommendations(ct_config, use_fp16=True)
+        
+        print("\n🧠 MRI CLASSIFIER CONFIGURATION:")
+        print_model_recommendations(mri_config, use_fp16=True)
+        
+        confirm = input("\n🤔 Proceed with these settings for both models? (y/n): ").lower().strip()
+        if confirm not in ['y', 'yes', '']:
+            print("❌ Training cancelled.")
+            return False
     
     # Train CT Model (Binary: NormalKronik vs Other)
     logger.info("🚀 Training CT Binary Classifier...")
@@ -52,15 +83,16 @@ def train_hierarchical_models(base_data_path: str, output_dir: str = "./models")
         'python', 'train.py',
         '--train_dir', str(ct_path / 'train'),
         '--test_dir', str(ct_path / 'val'),
-        '--model_name', ct_config['model_name'],
+        '--model_id', str(ct_model_id),
+        '--auto_config',  # Skip interactive menu
         '--learning_rate', str(ct_config['learning_rate']),
-        '--max_epochs', str(ct_config['max_epochs']),
         '--batch_size', str(ct_config['batch_size']),
+        '--image_size', str(ct_config['input_size']),
         '--output_dir', str(ct_output),
         '--dataset_type', ct_config['dataset_type'],
         '--class_weights',  # Handle class imbalance
-        '--label_smoothing', '0.1',  # Reduce overfitting
-        '--image_size', '224'
+        '--label_smoothing', str(ct_config['label_smoothing']),
+        '--max_epochs', '40'
     ]
     
     try:
@@ -76,15 +108,16 @@ def train_hierarchical_models(base_data_path: str, output_dir: str = "./models")
         'python', 'train.py',
         '--train_dir', str(mri_path / 'train'),
         '--test_dir', str(mri_path / 'val'),
-        '--model_name', mri_config['model_name'],
+        '--model_id', str(mri_model_id),
+        '--auto_config',  # Skip interactive menu
         '--learning_rate', str(mri_config['learning_rate']),
-        '--max_epochs', str(mri_config['max_epochs']),
         '--batch_size', str(mri_config['batch_size']),
+        '--image_size', str(mri_config['input_size']),
         '--output_dir', str(mri_output),
         '--dataset_type', mri_config['dataset_type'],
         '--class_weights',  # Handle class imbalance
-        '--mixup_alpha', '0.2',  # Data augmentation
-        '--image_size', '224'
+        '--mixup_alpha', str(mri_config['mixup_alpha']),
+        '--max_epochs', '35'
     ]
     
     try:
@@ -110,6 +143,12 @@ def main():
                        help='Output directory for trained models')
     parser.add_argument('--prepare_only', action='store_true',
                        help='Only prepare datasets without training')
+    parser.add_argument('--ct_model_id', type=int, default=None,
+                       help='CT model ID from menu (1-22)')
+    parser.add_argument('--mri_model_id', type=int, default=None,
+                       help='MRI model ID from menu (1-22)')
+    parser.add_argument('--auto_config', action='store_true',
+                       help='Use automatic configuration without interactive menu')
     
     args = parser.parse_args()
     
@@ -122,8 +161,22 @@ def main():
         logger.info("Dataset preparation completed!")
         return
     
+    # Welcome message
+    if not args.auto_config:
+        print("🏥 Welcome to Hierarchical Medical Image Classification Training!")
+        print("This system trains separate models for CT and MRI classification.")
+        print("CT Model: Classifies Normal/Chronic vs Other conditions")
+        print("MRI Model: Classifies Hyperacute vs Subacute stroke")
+        print()
+    
     # Train models
-    success = train_hierarchical_models(args.data_path, args.output_dir)
+    success = train_hierarchical_models(
+        args.data_path, 
+        args.output_dir,
+        args.ct_model_id,
+        args.mri_model_id,
+        args.auto_config
+    )
     
     if success:
         logger.info("✅ All models trained successfully!")

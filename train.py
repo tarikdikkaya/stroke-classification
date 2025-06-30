@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 
 from medicai.models.pl_models import TimmLightningClassifier
 from medicai.data.datasets import create_dataloaders
+from model_configs import display_model_menu, get_model_config, print_model_recommendations
 
 import torch
 torch.set_float32_matmul_precision('high')
@@ -30,19 +31,15 @@ def main():
     parser.add_argument('--train_dir', type=str, default='/home/sezer/split_dataset_latest/train', help='Directory with training data')
     parser.add_argument('--test_dir', type=str, default='/home/sezer/split_dataset_latest/test', help='Directory with test/validation data')
     parser.add_argument('--output_dir', type=str, default='./outputs', help='Output directory for model checkpoints')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=None, help='Batch size (auto-detected if not specified)')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate')
-    parser.add_argument('--image_size', type=int, default=224, help='Input image size')
+    parser.add_argument('--learning_rate', type=float, default=None, help='Learning rate (auto-detected if not specified)')
+    parser.add_argument('--image_size', type=int, default=None, help='Input image size (auto-detected if not specified)')
     parser.add_argument('--use_cache', action='store_true', help='Use cached DICOM files')
     parser.add_argument('--use_fp16', action='store_true', default=True, help='Use FP16 mixed precision training')
     parser.add_argument('--max_epochs', type=int, default=30, help='Maximum number of epochs to train')
-    parser.add_argument('--model_name', type=str, default='tf_efficientnet_b4_ns', 
-                       choices=['vit_small_patch16_224', 'vit_base_patch16_224', 'efficientnet_b3', 
-                               'efficientnetv2_s', 'resnet50', 'swin_small_patch4_window7_224',
-                               'convnext_small', 'tf_efficientnet_b4_ns', 'tf_efficientnet_b5_ns',
-                               'convnext_base', 'swin_base_patch4_window7_224'], 
-                       help='Model architecture to use')
+    parser.add_argument('--model_id', type=int, default=None, help='Model ID from menu (1-22)')
+    parser.add_argument('--auto_config', action='store_true', help='Use automatic configuration without menu')
     parser.add_argument('--dataset_type', type=str, default='general', 
                        choices=['general', 'ct_binary', 'mri_binary'], 
                        help='Type of dataset for hierarchical training')
@@ -55,10 +52,46 @@ def main():
     
     args = parser.parse_args()
     
-    # Adjust batch size for FP16 training if not explicitly set
-    if args.use_fp16 and args.batch_size == 8:  # If using default batch size
-        args.batch_size = 12  # Increase batch size for FP16 to utilize memory savings
-        logger.info(f"🚀 FP16 training enabled - increased batch size to {args.batch_size}")
+    # Interactive model selection or use provided model_id
+    if args.model_id is None and not args.auto_config:
+        print("🚀 Welcome to Advanced Medical Image Classification Training!")
+        print("Choose from our curated selection of top-performing models:")
+        model_id = display_model_menu()
+    elif args.model_id is not None:
+        model_id = args.model_id
+    else:
+        # Default for auto config
+        model_id = 1  # tf_efficientnet_b4_ns
+    
+    # Get optimized configuration
+    model_config = get_model_config(model_id, args.use_fp16)
+    
+    # Override with command line arguments if provided
+    if args.batch_size is not None:
+        model_config['batch_size'] = args.batch_size
+    if args.learning_rate is not None:
+        model_config['learning_rate'] = args.learning_rate
+    if args.image_size is not None:
+        model_config['input_size'] = args.image_size
+    
+    # Print optimized settings
+    if not args.auto_config:
+        print_model_recommendations(model_config, args.use_fp16)
+        
+        # Confirm settings
+        confirm = input("\n🤔 Proceed with these settings? (y/n): ").lower().strip()
+        if confirm not in ['y', 'yes', '']:
+            print("❌ Training cancelled.")
+            return
+    
+    # Extract settings
+    model_name = model_config['name']
+    batch_size = model_config['batch_size']
+    learning_rate = model_config['learning_rate'] 
+    image_size = model_config['input_size']
+    
+    logger.info(f"🎯 Selected Model: {model_config['display_name']}")
+    logger.info(f"📊 Settings: Batch={batch_size}, LR={learning_rate}, Size={image_size}px")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -68,10 +101,10 @@ def main():
     train_loader, val_loader, class_info = create_dataloaders(
         train_path=args.train_dir,
         test_path=args.test_dir,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         num_workers=args.num_workers,
         use_cache=args.use_cache,
-        image_size=args.image_size
+        image_size=image_size
     )
     
     num_classes = len(class_info['class_map'])
@@ -79,7 +112,7 @@ def main():
     logger.info(f"Class counts: {class_info['class_counts']}")
     
     # Initialize model with enhanced configuration
-    logger.info(f"Initializing {args.model_name} model for {args.dataset_type} dataset...")
+    logger.info(f"Initializing {model_name} model for {args.dataset_type} dataset...")
     
     # Calculate class weights if requested
     class_weights = None
@@ -98,10 +131,10 @@ def main():
         logger.info(f"Using class weights: {class_weights}")
     
     model = TimmLightningClassifier(
-        model_name=args.model_name,
+        model_name=model_name,
         num_classes=num_classes,
-        learning_rate=args.learning_rate,
-        input_size=args.image_size,
+        learning_rate=learning_rate,
+        input_size=image_size,
         class_weights=class_weights,
         label_smoothing=args.label_smoothing,
         mixup_alpha=args.mixup_alpha
@@ -113,7 +146,7 @@ def main():
     # Enhanced callbacks for better training
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=args.output_dir,
-        filename=f'p2_model_{args.model_name}_{timestamp}_{{epoch:02d}}_{{val_acc:.4f}}',
+        filename=f'p2_model_{model_name.replace(".", "_")}_{timestamp}_{{epoch:02d}}_{{val_acc:.4f}}',
         monitor='val_acc',
         mode='max',
         save_top_k=3,  # Save top 3 models
@@ -149,11 +182,14 @@ def main():
     )
     
     # Export the model
-    model_export_path = os.path.join(args.output_dir, f'{args.model_name}_{timestamp}.pt')
+    model_export_path = os.path.join(args.output_dir, f'{model_name.replace(".", "_")}_{timestamp}.pt')
     logger.info(f"Exporting model to {model_export_path}...")
     model.export(model_export_path)
     
     logger.info("Training complete!")
+    logger.info(f"📁 Model saved to: {model_export_path}")
+    logger.info(f"🎯 Best model settings: {model_config['display_name']}")
+    logger.info(f"📊 Final settings used: Batch={batch_size}, LR={learning_rate}, Size={image_size}px")
 
 if __name__ == '__main__':
     main()
