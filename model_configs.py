@@ -185,6 +185,22 @@ MODEL_CONFIGS = {
         'batch_size': 8,
         'learning_rate': 5e-6,
         'description': '🪟 Hierarchical window attention'
+    },
+    23: {
+        'name': 'densenet121.tv_in1k',
+        'display_name': 'DenseNet121 (ImageNet-21k Pre-trained)',
+        'input_size': 224,
+        'batch_size': 16,
+        'learning_rate': 1e-4,
+        'description': '🌿 Dense connectivity, memory efficient, good for medical imaging'
+    },
+    24: {
+        'name': 'mobilenetv1_100.ra4_e3600_r224_in1k',
+        'display_name': 'MobileNet-V1 (224px) - Lightweight & Fast',
+        'input_size': 224,
+        'batch_size': 32,
+        'learning_rate': 1e-3,
+        'description': '📱 Ultra-lightweight, perfect for edge deployment and fast training'
     }
 }
 
@@ -256,6 +272,8 @@ def display_model_menu() -> int:
         "Current Defaults (Recommended for beginners)": [1, 2, 3],
         "State-of-the-Art (Highest Accuracy)": [4, 5, 6, 7],
         "Modern CNNs (ConvNeXt Family)": [8, 11, 14, 17, 21],
+        "Classic CNNs (Proven Architectures)": [23],
+        "Lightweight Models (Fast Training & Deployment)": [24],
         "Vision Transformers (Advanced)": [9, 10, 15, 16],
         "EfficientNet Family (Balanced)": [1, 12, 18],
         "Hybrid Architectures (CNN + Transformer)": [13, 20],
@@ -294,7 +312,7 @@ def display_model_menu() -> int:
     
     while True:
         try:
-            choice = int(input("Select model number (1-22): "))
+            choice = int(input("Select model number (1-24): "))
             if choice in MODEL_CONFIGS:
                 return choice
             else:

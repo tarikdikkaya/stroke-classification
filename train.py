@@ -28,8 +28,8 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Train a ViT model on medical images')
     
-    parser.add_argument('--train_dir', type=str, default='/home/sezer/split_dataset_latest/train', help='Directory with training data')
-    parser.add_argument('--test_dir', type=str, default='/home/sezer/split_dataset_latest/test', help='Directory with test/validation data')
+    parser.add_argument('--train_dir', type=str, default='/P2_split_dataset/train', help='Directory with training data')
+    parser.add_argument('--test_dir', type=str, default='/P2_split_dataset/test', help='Directory with test/validation data')
     parser.add_argument('--output_dir', type=str, default='./outputs', help='Output directory for model checkpoints')
     parser.add_argument('--batch_size', type=int, default=None, help='Batch size (auto-detected if not specified)')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
@@ -38,7 +38,7 @@ def main():
     parser.add_argument('--use_cache', action='store_true', help='Use cached DICOM files')
     parser.add_argument('--use_fp16', action='store_true', default=True, help='Use FP16 mixed precision training')
     parser.add_argument('--max_epochs', type=int, default=30, help='Maximum number of epochs to train')
-    parser.add_argument('--model_id', type=int, default=None, help='Model ID from menu (1-22)')
+    parser.add_argument('--model_id', type=int, default=None, help='Model ID from menu (1-24)')
     parser.add_argument('--auto_config', action='store_true', help='Use automatic configuration without menu')
     parser.add_argument('--dataset_type', type=str, default='general', 
                        choices=['general', 'ct_binary', 'mri_binary'], 

@@ -144,9 +144,9 @@ def main():
     parser.add_argument('--prepare_only', action='store_true',
                        help='Only prepare datasets without training')
     parser.add_argument('--ct_model_id', type=int, default=None,
-                       help='CT model ID from menu (1-22)')
+                       help='CT model ID from menu (1-24)')
     parser.add_argument('--mri_model_id', type=int, default=None,
-                       help='MRI model ID from menu (1-22)')
+                       help='MRI model ID from menu (1-24)')
     parser.add_argument('--auto_config', action='store_true',
                        help='Use automatic configuration without interactive menu')
     
