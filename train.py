@@ -28,8 +28,8 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Train a ViT model on medical images')
     
-    parser.add_argument('--train_dir', type=str, default='/P2_split_dataset/train', help='Directory with training data')
-    parser.add_argument('--test_dir', type=str, default='/P2_split_dataset/test', help='Directory with test/validation data')
+    parser.add_argument('--train_dir', type=str, default='P2_M1_split_dataset/train', help='Directory with training data')
+    parser.add_argument('--test_dir', type=str, default='P2_M1_split_dataset/test', help='Directory with test/validation data')
     parser.add_argument('--output_dir', type=str, default='./outputs', help='Output directory for model checkpoints')
     parser.add_argument('--batch_size', type=int, default=None, help='Batch size (auto-detected if not specified)')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
