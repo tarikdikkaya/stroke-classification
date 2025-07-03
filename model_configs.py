@@ -269,7 +269,7 @@ def display_model_menu() -> int:
     
     # Group models by category
     categories = {
-        "Current Defaults (Recommended for beginners)": [1, 2, 3],
+        "Current Defaults (Recommended for beginners)": [1, 2, 3, 23],
         "State-of-the-Art (Highest Accuracy)": [4, 5, 6, 7],
         "Modern CNNs (ConvNeXt Family)": [8, 11, 14, 17, 21],
         "Classic CNNs (Proven Architectures)": [23],
